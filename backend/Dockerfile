@@ -10,9 +10,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Warm g2p-en / nltk data at build time so the first request isn't slow
-# and doesn't need to download anything at runtime.
-RUN python -c "from g2p_en import G2p; G2p()"
+# g2p-en needs these NLTK corpora at runtime (Render has no home-dir cache).
+# Download explicitly — G2p() alone does not pull every tagger package.
+ENV NLTK_DATA=/usr/local/share/nltk_data
+RUN python -c "\
+import nltk; \
+nltk.download('averaged_perceptron_tagger_eng', download_dir='/usr/local/share/nltk_data'); \
+nltk.download('averaged_perceptron_tagger', download_dir='/usr/local/share/nltk_data'); \
+nltk.download('cmudict', download_dir='/usr/local/share/nltk_data'); \
+nltk.download('punkt', download_dir='/usr/local/share/nltk_data'); \
+nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data'); \
+from g2p_en import G2p; \
+assert G2p()('island'), 'g2p warmup failed'"
 
 COPY . .
 

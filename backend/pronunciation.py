@@ -25,6 +25,26 @@ def _max_practice_words() -> int:
 def _pass_threshold() -> float:
     return get_constants()["PASS_THRESHOLD"]
 
+
+def _ensure_nltk_data() -> None:
+    """g2p-en needs these taggers; download once if the image missed them."""
+    import nltk
+
+    checks = (
+        ("averaged_perceptron_tagger_eng", "taggers/averaged_perceptron_tagger_eng"),
+        ("averaged_perceptron_tagger", "taggers/averaged_perceptron_tagger"),
+        ("cmudict", "corpora/cmudict"),
+        ("punkt", "tokenizers/punkt"),
+        ("punkt_tab", "tokenizers/punkt_tab"),
+    )
+    for pkg, path in checks:
+        try:
+            nltk.data.find(path)
+        except LookupError:
+            nltk.download(pkg, quiet=True)
+
+
+_ensure_nltk_data()
 _g2p = G2p()
 _WORD_RE = re.compile(r"[a-zA-Z']+")
 _SKIP_WORDS = {

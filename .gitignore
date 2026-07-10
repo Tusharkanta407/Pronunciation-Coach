@@ -6,6 +6,12 @@ __v0_jsx-dev-runtime.ts
 .v0-trash/
 .vercel/
 
+# Cursor / editor (never commit)
+.cursor/
+.cursorrules
+AGENTS.md
+*.canvas.tsx
+
 # Environment variables
 .env
 .env*.local
@@ -22,3 +28,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# OS / editor junk
+Thumbs.db
+*.swp
+.idea/
+.vscode/

@@ -37,16 +37,23 @@ async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSON
     return JSONResponse(status_code=500, content={"detail": f"Server error: {exc}"})
 
 
-cors_origin = os.getenv("CORS_ORIGIN", "http://localhost:3000")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        cors_origin,
+def _cors_origins() -> list[str]:
+    origins = {
+        os.getenv("CORS_ORIGIN", "http://localhost:3000"),
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    }
+    for part in os.getenv("CORS_ORIGINS", "").split(","):
+        part = part.strip()
+        if part:
+            origins.add(part)
+    return sorted(origins)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -835,6 +835,7 @@ def build_analysis(
     *,
     guided: bool = False,
     jam: bool = False,
+    target_words: Optional[list[str]] = None,
 ) -> tuple[float, list[dict], list[dict], dict]:
     """Returns score, word mistakes, pauses, stats."""
     transcript = transcription.text
@@ -843,14 +844,28 @@ def build_analysis(
 
     if guided or jam:
         score, mistakes = score_guided(
-            reference, fixed_transcript, transcription.words, jam=jam
+            reference,
+            fixed_transcript,
+            transcription.words,
+            jam=jam,
+            target_words=target_words,
         )
     else:
         score, mistakes = score_scripted(reference, fixed_transcript, transcription.words)
 
-    expected_count = len(_tokenize(reference)) if not (guided or jam) else len(heard_pairs)
+    targets = target_words or []
+    expected_count = (
+        len(targets)
+        if (guided or jam) and targets
+        else (len(_tokenize(reference)) if not (guided or jam) else len(heard_pairs))
+    )
     spoken_count = len(heard_pairs)
     skipped = sum(1 for m in mistakes if m.get("mistakeType") == "skipped")
+    targets_clear = (
+        len(targets) - len([m for m in mistakes if m.get("mistakeType") in {"skipped", "unclear", "mumbled"}])
+        if targets
+        else 0
+    )
 
     stats = {
         "wordsExpected": expected_count,
@@ -860,6 +875,8 @@ def build_analysis(
         "guided": guided or jam,
         "jam": jam,
         "transcriptWords": len(_tokenize(transcript)),
+        "targetWords": targets,
+        "targetsClear": max(0, targets_clear),
     }
     return score, mistakes, pauses, stats
 
@@ -1243,17 +1260,102 @@ def _detect_jam_unclear(heard: list[tuple[str, float]], *, synthetic: bool) -> l
     return mistakes
 
 
+def _best_target_hit(
+    target: str,
+    heard: list[tuple[str, float]],
+) -> tuple[Optional[str], float]:
+    """Return (heard_form, confidence) for the best STT match of a target word."""
+    t = target.lower()
+    best_word: Optional[str] = None
+    best_conf = 0.0
+    best_sim = 0.0
+    for hw, conf in heard:
+        wl = hw.lower()
+        if wl == t:
+            return hw, conf
+        sim = _word_similarity(t, wl)
+        if sim > best_sim or (sim == best_sim and conf > best_conf):
+            best_sim, best_conf, best_word = sim, conf, hw
+    # Accept near-matches (STT spelling drift) but not unrelated words
+    if best_word is not None and best_sim >= 82:
+        return best_word, best_conf
+    return None, 0.0
+
+
+def _evaluate_target_words(
+    heard: list[tuple[str, float]],
+    targets: list[str],
+    *,
+    synthetic: bool,
+) -> tuple[float, list[dict]]:
+    """Score Free Speech / Jam on required target words only.
+
+    Each target: missing → 0 + practice; unclear → low score + practice; clear → full credit.
+    Overall = average of per-target scores.
+    """
+    if not targets:
+        return 0.0, []
+
+    clarity_floor = 78.0 if synthetic else float(LOW_CONFIDENCE)
+    mistakes: list[dict] = []
+    scores: list[float] = []
+
+    for target in targets:
+        heard_form, conf = _best_target_hit(target, heard)
+        if heard_form is None:
+            scores.append(0.0)
+            mistakes.append(
+                {
+                    "word": target,
+                    "expected": target,
+                    "heard": "(not said)",
+                    "issue": "required word missing from your speech",
+                    "summaryLine": f"You did not say '{target}' — include it clearly in your talk",
+                    "mistakeType": "skipped",
+                    "suggestion": _suggestion_for(target),
+                    "score": 0.0,
+                    "cleared": False,
+                }
+            )
+            continue
+
+        if conf < clarity_floor:
+            scores.append(conf)
+            mistakes.append(
+                {
+                    "word": target,
+                    "expected": target,
+                    "heard": heard_form,
+                    "issue": "required word was unclear or mumbled",
+                    "summaryLine": f"'{target}' was hard to catch — say it slower and louder",
+                    "mistakeType": "unclear",
+                    "suggestion": _suggestion_for(target),
+                    "score": conf,
+                    "cleared": False,
+                }
+            )
+            continue
+
+        # Clear hit
+        scores.append(min(100.0, conf if conf < 99 else 95.0))
+
+    overall = sum(scores) / len(scores)
+    return round(overall, 1), mistakes
+
+
 def score_guided(
     reference: str,
     transcript: str,
     word_tokens: Optional[list[WordToken]] = None,
     *,
     jam: bool = False,
+    target_words: Optional[list[str]] = None,
 ) -> tuple[float, list[dict]]:
-    """Free-speech / Jam mode: score natural speech — no forced passage alignment.
+    """Free-speech / Jam: score required target words for presence + clarity.
 
-    Jam (Just a Minute): any topic, flag unclear/mumbled words from STT confidence.
-    Free speech: same + soft intro-topic coverage bonus.
+    Free Speech — 5 intro words must be said clearly.
+    Jam — 7 hard words must be said clearly (score is based on them).
+    Light fluency flags (repeats) still attach on Jam but do not replace target scoring.
     """
     _fixed, heard = _prepare_heard_pairs(transcript, word_tokens)
     if not heard:
@@ -1271,78 +1373,46 @@ def score_guided(
             }
         ]
 
-    mistakes: list[dict] = []
-    word_scores: list[float] = []
+    targets = [t.lower() for t in (target_words or []) if t.strip()]
     synthetic = _heard_is_synthetic(heard)
 
-    if jam:
-        mistakes.extend(_detect_jam_repetitions(heard))
-        mistakes.extend(_detect_jam_phrase_repeats(heard))
-        mistakes.extend(_detect_jam_unclear(heard, synthetic=synthetic))
-        # De-dupe by word + mistake type
-        deduped: list[dict] = []
-        seen_keys: set[tuple[str, str]] = set()
-        for m in mistakes:
-            key = (m["word"].lower(), m.get("mistakeType", ""))
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            deduped.append(m)
-        mistakes = deduped
-    else:
-        seen: set[str] = set()
-        for word, conf in heard:
-            w = word.lower()
-            if w in _SKIP_WORDS or len(w) <= 2:
-                continue
-            score = conf
-            word_scores.append(score)
-            if conf < LOW_CONFIDENCE and w not in seen and len(w) > 3:
-                seen.add(w)
-                mistakes.append(
-                    {
-                        "word": w,
-                        "expected": w,
-                        "heard": w,
-                        "issue": "low clarity — hard to understand in the recording",
-                        "summaryLine": f"'{w}' was mumbled or unclear — say it louder and slower",
-                        "mistakeType": "mumbled",
-                        "suggestion": _suggestion_for(w),
-                        "score": conf,
-                        "cleared": False,
-                    }
-                )
+    if targets:
+        overall, mistakes = _evaluate_target_words(heard, targets, synthetic=synthetic)
+        if jam:
+            # Soft fluency notes — do not dominate the score
+            fluency = _detect_jam_repetitions(heard)[:2]
+            for m in fluency:
+                if m["word"].lower() not in {x["word"].lower() for x in mistakes}:
+                    mistakes.append(m)
+            overall = max(0.0, overall - min(8.0, len(fluency) * 2))
+        return round(overall, 1), mistakes[:12]
 
+    # Fallback if no targets configured (should not happen for free-speech / jam)
+    mistakes: list[dict] = []
+    word_scores: list[float] = []
+    seen: set[str] = set()
     for word, conf in heard:
         w = word.lower()
         if w in _SKIP_WORDS or len(w) <= 2:
             continue
         word_scores.append(conf)
-
-    # Soft topic coverage — intro round only (Jam: any topic is valid)
-    coverage_bonus = 0.0
-    if not jam:
-        prompt_topics = {
-            "name": {"name", "i'm", "im", "called"},
-            "interest": {"hobby", "hobbies", "enjoy", "love", "like", "favorite", "passion", "play", "reading"},
-            "personal": {"from", "live", "work", "study", "family", "friend", "share", "about"},
-        }
-        heard_set = {h.lower() for h, _ in heard}
-        covered = sum(1 for cues in prompt_topics.values() if heard_set & cues)
-        coverage_bonus = covered * 4  # up to +12
-
+        if conf < LOW_CONFIDENCE and w not in seen and len(w) > 3:
+            seen.add(w)
+            mistakes.append(
+                {
+                    "word": w,
+                    "expected": w,
+                    "heard": w,
+                    "issue": "low clarity — hard to understand in the recording",
+                    "summaryLine": f"'{w}' was mumbled or unclear — say it louder and slower",
+                    "mistakeType": "mumbled",
+                    "suggestion": _suggestion_for(w),
+                    "score": conf,
+                    "cleared": False,
+                }
+            )
     base = sum(word_scores) / len(word_scores) if word_scores else 40.0
-    # If STT gave no confidence (all 100 from text-only), use length heuristic
-    if word_tokens is None or all(c >= 99 for _, c in heard):
-        n = len([w for w, _ in heard if w not in _SKIP_WORDS])
-        base = min(92.0, 55.0 + n * 2.5)
-
-    overall = min(100.0, base + coverage_bonus - len(mistakes) * 3)
-    if jam:
-        repeat_penalty = sum(2 for m in mistakes if m.get("mistakeType") in {"repeat", "stutter"})
-        overall = max(0.0, overall - repeat_penalty)
-
-    return round(max(0.0, overall), 1), mistakes[:10]
+    return round(max(0.0, min(100.0, base - len(mistakes) * 3)), 1), mistakes[:10]
 
 
 def format_mistakes(mistakes: list[dict]) -> list[dict]:
@@ -1385,21 +1455,24 @@ def pick_practice_words(
     critical = _critical_words()
 
     if guided or jam:
-        practice_types = {"mumbled", "unclear", "repeat", "stutter"} if jam else {"mumbled"}
+        # Target-word rounds: practice missing + unclear required words first
+        practice_types = {"skipped", "unclear", "mumbled", "repeat", "stutter"}
         filtered = [
             m
             for m in mistakes
             if m.get("mistakeType") in practice_types
             and m.get("word", "").lower() not in _META_PRACTICE_WORDS
             and not m.get("cleared")
+            and not str(m.get("word", "")).startswith("(")
             and len(m.get("word", "")) > 2
             and m["word"].lower() not in _SKIP_WORDS
         ]
-        def jam_sort(m: dict) -> tuple:
-            priority = {"repeat": 0, "stutter": 1, "mumbled": 2, "unclear": 3}
+
+        def guided_sort(m: dict) -> tuple:
+            priority = {"skipped": 0, "unclear": 1, "mumbled": 2, "repeat": 3, "stutter": 4}
             return (priority.get(m.get("mistakeType", ""), 9), m.get("score", 0))
-        if jam:
-            filtered.sort(key=jam_sort)
+
+        filtered.sort(key=guided_sort)
         return format_mistakes(_dedupe_by_word(filtered)[:cap])
 
     filtered = [

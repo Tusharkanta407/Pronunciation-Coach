@@ -11,7 +11,7 @@ import { CompactScore } from '../assessment/CompactScore'
 import { MistakeFeedbackPanel } from '../assessment/MistakeFeedbackPanel'
 import { InlinePracticeWord } from '../assessment/InlinePracticeWord'
 import { TranscriptHighlight } from '../results/TranscriptHighlight'
-import { getLevel, AssessmentMode, MAX_PRACTICE_WORDS, PASS_THRESHOLD, pickJamTopic, isGuidedMode } from '@/lib/levels'
+import { getLevel, AssessmentMode, MAX_PRACTICE_WORDS, PASS_THRESHOLD, pickJamTopic, isGuidedMode, getTargetWords } from '@/lib/levels'
 import { Results } from '@/context/AssessmentContext'
 import { ArrowLeft, Upload } from 'lucide-react'
 
@@ -69,8 +69,10 @@ function getTutorialSteps(mode: AssessmentMode): TutorialStep[] {
     return [
       {
         id: 'read',
-        title: `Prepare: ${level.title}`,
-        description: level.instruction,
+        title: 'Use all 5 target words',
+        description:
+          'Introduce yourself naturally — but you must clearly say each highlighted target word in your speech.',
+        hint: '✓ Score is based on those 5 words only.',
         target: 'passage-card',
       },
       {
@@ -81,8 +83,8 @@ function getTutorialSteps(mode: AssessmentMode): TutorialStep[] {
       },
       {
         id: 'analyze',
-        title: 'Submit & practice mistakes',
-        description: 'Analyze your recording, then practice words on the right.',
+        title: 'Submit & practice',
+        description: 'Missing or unclear target words appear on the right — practice them to continue.',
         target: 'analyze-button',
       },
     ]
@@ -92,9 +94,10 @@ function getTutorialSteps(mode: AssessmentMode): TutorialStep[] {
     return [
       {
         id: 'topic',
-        title: 'Your random topic',
-        description: 'Read the topic on the left. Talk about it freely — any angle is fine.',
-        hint: '🎲 A new topic appears each time you enter this round.',
+        title: 'Topic + 7 hard words',
+        description:
+          'Talk about the topic for at least one minute. Weave in every hard word clearly — that is what we score.',
+        hint: '🎯 All 7 words must appear in your talk.',
         target: 'passage-card',
       },
       {
@@ -112,8 +115,8 @@ function getTutorialSteps(mode: AssessmentMode): TutorialStep[] {
       },
       {
         id: 'analyze',
-        title: 'Submit & practice mistakes',
-        description: 'We pick up pronunciation errors from your speech. Practice flagged words to continue.',
+        title: 'Submit & practice hard words',
+        description: 'We check the 7 hard words. Practice any that were missing or unclear.',
         target: 'analyze-button',
       },
     ]
@@ -161,6 +164,7 @@ export function AssessmentWorkspace({
     results && isGuidedMode(mode) ? results.transcript : level.content
   const isGuidedSpeech = isGuidedMode(mode)
   const isJam = mode === 'just-a-minute'
+  const targetWords = getTargetWords(mode)
   const minSeconds = level.minRecordingSeconds
   const meetsMinDuration = recordingTime >= minSeconds
   const allPracticeCleared =
@@ -370,6 +374,50 @@ export function AssessmentWorkspace({
                       <p className="text-lg font-semibold text-foreground leading-snug">{jamTopic}</p>
                     </div>
                     <p className="text-sm text-muted-foreground">{level.content}</p>
+                    {targetWords.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                          Hard words to use ({targetWords.length}) — scored
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {targetWords.map((w) => (
+                            <span
+                              key={w}
+                              className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-sm font-medium text-foreground"
+                            >
+                              {w}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : mode === 'free-speech' ? (
+                  <div className="space-y-4">
+                    <p className="text-foreground leading-relaxed text-base">{level.content}</p>
+                    <p className="text-sm text-muted-foreground">{level.instruction}</p>
+                    {targetWords.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                          Must say clearly ({targetWords.length} words)
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {targetWords.map((w) => (
+                            <span
+                              key={w}
+                              className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-sm font-medium text-foreground"
+                            >
+                              {w}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Example: &ldquo;I have some work <strong>experience</strong> and{' '}
+                          <strong>education</strong> in tech. I am <strong>interested</strong> in a{' '}
+                          <strong>professional</strong> role and feel <strong>enthusiastic</strong> about learning.&rdquo;
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-foreground leading-relaxed text-base">{level.content}</p>

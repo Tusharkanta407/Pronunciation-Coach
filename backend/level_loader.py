@@ -32,6 +32,13 @@ def get_critical_words() -> set[str]:
     return _levels_module.CRITICAL_WORDS
 
 
+def get_target_words(mode: str) -> list[str]:
+    _maybe_reload()
+    level = _levels_module.LEVELS.get(mode) or {}
+    words = level.get("target_words") or []
+    return [str(w).lower() for w in words]
+
+
 def get_constants() -> dict:
     _maybe_reload()
     return {

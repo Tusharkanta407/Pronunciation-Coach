@@ -50,6 +50,9 @@ export interface AnalysisStats {
   wordsSkipped: number
   pauseCount: number
   guided?: boolean
+  jam?: boolean
+  targetWords?: string[]
+  targetsClear?: number
 }
 
 export interface Results {

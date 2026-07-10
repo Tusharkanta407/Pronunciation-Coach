@@ -79,8 +79,18 @@ export function MistakeFeedbackPanel({
               <>{Math.round(audioDurationSeconds)}s recording · </>
             )}
             {results.stats.wordsSpoken} words detected
-            {!isGuided && ` · ${results.stats.wordsExpected} expected`}
-            {results.stats.wordsSkipped > 0 && ` · ${results.stats.wordsSkipped} skipped`}
+            {results.stats.targetWords && results.stats.targetWords.length > 0 ? (
+              <>
+                {' · '}
+                {results.stats.targetsClear ?? 0}/{results.stats.targetWords.length} target words clear
+                {results.stats.wordsSkipped > 0 && ` · ${results.stats.wordsSkipped} missing`}
+              </>
+            ) : (
+              <>
+                {!isGuided && ` · ${results.stats.wordsExpected} expected`}
+                {results.stats.wordsSkipped > 0 && ` · ${results.stats.wordsSkipped} skipped`}
+              </>
+            )}
             {results.stats.pauseCount > 0 && ` · ${results.stats.pauseCount} long pause(s)`}
           </p>
         )}

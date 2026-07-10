@@ -8,10 +8,12 @@ export interface LevelConfig {
   content: string
   minRecordingSeconds: number
   maxRecordingSeconds: number
+  /** Words the learner must say clearly — scored for Free Speech / Jam */
+  targetWords?: string[]
 }
 
 export const PRACTICE_WORD_MAX_SECONDS = 10
-export const MAX_PRACTICE_WORDS = 4
+export const MAX_PRACTICE_WORDS = 5
 
 /** Challenge words from the passage — backend practice priority only. */
 export const CRITICAL_WORDS = [
@@ -23,6 +25,26 @@ export const CRITICAL_WORDS = [
   'responsibility',
   'necessary',
 ]
+
+/** Free Speech: natural intro words — must say clearly in your introduction. */
+export const FREE_SPEECH_TARGET_WORDS = [
+  'experience',
+  'education',
+  'interested',
+  'professional',
+  'enthusiastic',
+] as const
+
+/** Jam: different hard words — score is based on these (not the intro set). */
+export const JAM_TARGET_WORDS = [
+  'entrepreneur',
+  'opportunity',
+  'environment',
+  'communication',
+  'particularly',
+  'responsibility',
+  'necessary',
+] as const
 
 /** Random topics for Round 3 — Jam: Just a Minute */
 export const JAM_TOPICS = [
@@ -67,23 +89,27 @@ export const LEVELS: LevelConfig[] = [
     id: 'free-speech',
     tabLabel: 'Free Speech',
     title: 'Share About Yourself',
-    instruction: 'Cover your name, a hobby, or anything you want to share — speak naturally.',
+    instruction:
+      'Introduce yourself naturally — and clearly say each of the 5 target words somewhere in your introduction.',
     content:
-      'Cover your name, a hobby, or anything you want to share. ' +
-      'Speak clearly and naturally for up to 60 seconds.',
+      'Talk about who you are, what you do, and what you enjoy. ' +
+      'You must include all 5 target words below. We score how clearly you pronounce them.',
     minRecordingSeconds: 3,
     maxRecordingSeconds: 60,
+    targetWords: [...FREE_SPEECH_TARGET_WORDS],
   },
   {
     id: 'just-a-minute',
     tabLabel: 'Jam',
     title: 'Jam — Just a Minute',
-    instruction: 'Talk about the topic below for at least one full minute. Any angle is fine — just keep speaking clearly.',
+    instruction:
+      'Talk about the topic for at least one full minute. Weave in all 7 hard words clearly — your score is based on those words.',
     content:
       'Speak continuously for at least 60 seconds (up to 75 seconds). ' +
-      'We will pick up pronunciation mistakes from your speech as you go.',
+      'Use every hard word below at least once. Clarity on those words decides your score.',
     minRecordingSeconds: 60,
     maxRecordingSeconds: 75,
+    targetWords: [...JAM_TARGET_WORDS],
   },
 ]
 
@@ -95,4 +121,8 @@ export function getLevel(mode: AssessmentMode): LevelConfig {
 
 export function isGuidedMode(mode: AssessmentMode): boolean {
   return mode === 'free-speech' || mode === 'just-a-minute'
+}
+
+export function getTargetWords(mode: AssessmentMode): string[] {
+  return getLevel(mode).targetWords ?? []
 }

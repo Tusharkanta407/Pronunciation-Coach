@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from audio_utils import to_wav_bytes, validate_passage_audio, validate_practice_audio
-from level_loader import get_constants, get_levels
+from level_loader import get_constants, get_levels, get_target_words
 from llm import generate_feedback
 from pronunciation import (
     build_analysis,
@@ -176,7 +176,11 @@ async def analyze_audio(
 
     try:
         score, all_mistakes, pauses, stats = build_analysis(
-            reference, transcription, guided=guided, jam=jam
+            reference,
+            transcription,
+            guided=guided,
+            jam=jam,
+            target_words=get_target_words(mode),
         )
     except Exception as e:
         raise HTTPException(500, f"Analysis failed: {e}") from e

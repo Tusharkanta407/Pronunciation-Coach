@@ -58,7 +58,7 @@ export const LEVELS: LevelConfig[] = [
       'The fresh air helps me concentrate and improves my confidence when speaking English. ' +
       'Along the way, I notice how comfortable conversations become with regular practice and clear pronunciation. ' +
       'Sometimes, words like entrepreneur, opportunity, environment, communication, particularly, responsibility, and necessary require extra attention because they are easy to mispronounce. ' +
-      'Certain words, such as island, castle, and comfortable, are tricky because their spelling does not match how they actually sound. ' +
+      'Certain words, such as island and comfortable, are tricky because their spelling does not match how they actually sound. ' +
       'By reading aloud every day and listening carefully to my own voice, I gradually become more fluent, expressive, and confident in everyday conversations.',
     minRecordingSeconds: 3,
     maxRecordingSeconds: 60,

@@ -102,17 +102,12 @@ _META_PRACTICE_WORDS = {"introduction", "speech", "ending", "transcription"}
 # `confidence_floor` — even if the correct word is heard, flag it as unclear
 # when Whisper's confidence stays below this (the sound was borderline).
 PRONUNCIATION_TRAPS: dict[str, dict] = {
-    # NOTE: only silent-letter / reduction traps here. True homophones like
-    # whether/weather sound identical to STT even when said correctly, so they
-    # can never be verified reliably — don't use them as practice words.
+    # NOTE: only traps where correct speech → STT usually writes the right word.
+    # Skip near-homophones (whether/weather, castle/casual) — correct speech
+    # still fails practice forever.
     "island": {
         "confusions": {"iland", "ireland", "highland", "isle", "izland", "aisland"},
         "tip": "The 's' is silent: say 'EYE-land'.",
-        "confidence_floor": 75,
-    },
-    "castle": {
-        "confusions": {"castel", "cassel", "castile", "castrol", "hassle", "cattle"},
-        "tip": "The 't' is silent: say 'KAH-sul' (UK) / 'KASS-ul' (US).",
         "confidence_floor": 75,
     },
     "comfortable": {

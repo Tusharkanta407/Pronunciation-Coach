@@ -430,9 +430,9 @@ export function AssessmentWorkspace({
                   <p className="text-xs text-muted-foreground">
                     Practice up to {MAX_PRACTICE_WORDS} words (10s each) to continue.
                   </p>
-                  {practiceWords.map((issue) => (
+                  {practiceWords.map((issue, idx) => (
                     <InlinePracticeWord
-                      key={issue.word}
+                      key={`${issue.word}-${issue.mistakeType ?? 'word'}-${idx}`}
                       issue={issue}
                       mode={mode}
                       onEnsureSession={onEnsureSession}

@@ -59,9 +59,9 @@ export function TranscriptHighlight({
         <div className="space-y-3">
           {wordsToImprove
             .filter((w) => !w.cleared)
-            .map((mistake) => (
+            .map((mistake, idx) => (
               <div
-                key={mistake.word}
+                key={`${mistake.word}-${mistake.heard ?? ''}-${idx}`}
                 className="rounded-lg border border-destructive/20 bg-destructive/5 p-3"
               >
                 <div className="flex items-center gap-2 mb-1 flex-wrap">

@@ -5,6 +5,7 @@ import { PauseIssue, Results, WordIssue } from '@/context/AssessmentContext'
 
 const TYPE_LABELS: Record<string, string> = {
   wrong_word: 'Wrong word',
+  wrong_sound: 'Mispronounced',
   skipped: 'Skipped / mumbled',
   unclear: 'Unclear',
   mumbled: 'Mumbled',
@@ -91,9 +92,9 @@ export function MistakeFeedbackPanel({
           <div className="space-y-2">
             {mistakes
               .filter((m) => !m.cleared)
-              .map((m: WordIssue) => (
+              .map((m: WordIssue, i: number) => (
                 <MistakeRow
-                  key={`${m.word}-${m.heard}`}
+                  key={`${m.word}-${m.heard}-${m.mistakeType ?? 'issue'}-${i}`}
                   summaryLine={m.summaryLine || m.issue}
                   mistakeType={m.mistakeType}
                   expected={m.expected ?? m.word}

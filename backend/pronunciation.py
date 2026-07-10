@@ -1,3 +1,5 @@
+import asyncio
+import io
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -8,6 +10,12 @@ from rapidfuzz import fuzz
 
 from config import groq_api_key
 from level_loader import get_constants, get_critical_words
+
+# Whisper is most reliable on <=30s windows. Longer audio is split into
+# overlapping chunks so a hallucination in one part can't drop the rest.
+_STT_SINGLE_LIMIT_MS = 30_000
+_STT_CHUNK_MS = 24_000
+_STT_CHUNK_STEP_MS = 21_000  # ~3s overlap between consecutive chunks
 
 
 def _max_practice_words() -> int:
@@ -67,6 +75,46 @@ LOW_CONFIDENCE = 72
 VERIFY_PASS_SCORE = 82
 PAUSE_GAP_SECONDS = 0.9
 _META_PRACTICE_WORDS = {"introduction", "speech", "ending", "transcription"}
+
+# Pronunciation traps: words whose spelling does not match their sound.
+# When STT hears a listed "confusion" instead of the target word, the learner
+# almost certainly mispronounced it (silent letter, wrong vowel, or homophone).
+# `confidence_floor` — even if the correct word is heard, flag it as unclear
+# when Whisper's confidence stays below this (the sound was borderline).
+PRONUNCIATION_TRAPS: dict[str, dict] = {
+    # NOTE: only silent-letter / reduction traps here. True homophones like
+    # whether/weather sound identical to STT even when said correctly, so they
+    # can never be verified reliably — don't use them as practice words.
+    "island": {
+        "confusions": {"iland", "ireland", "highland", "isle", "izland", "aisland"},
+        "tip": "The 's' is silent: say 'EYE-land'.",
+        "confidence_floor": 75,
+    },
+    "castle": {
+        "confusions": {"castel", "cassel", "castile", "castrol", "hassle", "cattle"},
+        "tip": "The 't' is silent: say 'KAH-sul' (UK) / 'KASS-ul' (US).",
+        "confidence_floor": 75,
+    },
+    "comfortable": {
+        "confusions": {"comftable", "confortable", "comfterble", "comfortabl", "comfterbal", "comfort"},
+        "tip": "Four smooth beats: 'KUMF-ter-buh-bul' — don't drop syllables.",
+        "confidence_floor": 76,
+    },
+}
+
+
+def _trap_tip(expected: str, heard: Optional[str]) -> Optional[str]:
+    """Return a coaching tip when `heard` is a known mispronunciation of `expected`."""
+    trap = PRONUNCIATION_TRAPS.get(expected.lower())
+    if not trap:
+        return None
+    if heard is not None and heard.lower() in trap["confusions"]:
+        return trap["tip"]
+    return None
+
+
+def _is_trap_confusion(expected: str, heard: Optional[str]) -> bool:
+    return _trap_tip(expected, heard) is not None
 
 
 @dataclass
@@ -345,6 +393,11 @@ def _should_flag_mistake(exp: str, heard_word: Optional[str], similarity: float)
     if heard_word is None:
         return len(exp) > 3 and exp.lower() not in _SKIP_WORDS
 
+    # Trap words (silent letters / homophones) are flagged even at high text
+    # similarity — 'whether' vs 'weather' look almost identical to fuzzy match.
+    if _is_trap_confusion(exp, heard_word):
+        return True
+
     if similarity >= _GOOD_MATCH:
         return False
 
@@ -530,6 +583,17 @@ def _classify_issue(
 
     exp_l, heard_l = exp.lower(), heard_word.lower()
     is_critical = exp_l in _critical_words()
+    trap = PRONUNCIATION_TRAPS.get(exp_l)
+
+    # Said a known look-alike / homophone — this is a real pronunciation error,
+    # not just a "wrong word". Give the specific sound tip.
+    trap_tip = _trap_tip(exp, heard_word)
+    if trap_tip:
+        return (
+            f"mispronounced — sounded like '{heard_word}'",
+            "wrong_sound",
+            f"'{exp}' came out as '{heard_word}'. {trap_tip}",
+        )
 
     if exp_l != heard_l:
         if _is_whisper_variant(exp, heard_word, similarity):
@@ -538,6 +602,15 @@ def _classify_issue(
             f"wrong word spoken",
             "wrong_word",
             f"You said '{heard_word}' instead of '{exp}'",
+        )
+
+    # Correct word heard, but a trap word came out with shaky confidence —
+    # the sound was borderline even though STT guessed the spelling right.
+    if trap and confidence < trap["confidence_floor"]:
+        return (
+            "pronunciation unclear on a tricky word",
+            "unclear",
+            f"'{exp}' was close but unclear. {trap['tip']}",
         )
 
     threshold = CRITICAL_SIMILARITY if is_critical else MISTAKE_SIMILARITY
@@ -557,6 +630,9 @@ def _classify_issue(
 
 
 def _suggestion_for(word: str) -> str:
+    trap = PRONUNCIATION_TRAPS.get(word.lower())
+    if trap:
+        return trap["tip"]
     phones = _phonemes(word).replace(" ", "-")
     return f"Say slowly: {phones}" if phones else f"Say '{word}' slowly and clearly."
 
@@ -606,6 +682,70 @@ def _make_mistake(
     }
 
 
+async def _stt_request(
+    client: httpx.AsyncClient,
+    api_key: str,
+    wav_bytes: bytes,
+    prompt: Optional[str] = None,
+) -> dict:
+    request_data = {
+        "model": "whisper-large-v3",
+        "language": "en",
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": "word",
+        "temperature": "0",
+    }
+    if prompt:
+        request_data["prompt"] = prompt
+    resp = await client.post(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+        data=request_data,
+    )
+    if resp.status_code == 401:
+        raise RuntimeError(
+            f"Groq rejected the API key (401). Restart uvicorn after changing .env. {resp.text[:200]}"
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _merge_chunk_results(chunks: list[tuple[float, dict]]) -> tuple[str, list[dict], list[dict]]:
+    """Merge per-chunk Whisper output, offsetting timestamps and dropping overlap dupes."""
+    words: list[dict] = []
+    segments: list[dict] = []
+    for offset_s, data in chunks:
+        for w in data.get("words") or []:
+            try:
+                start = float(w.get("start", 0)) + offset_s
+                end = float(w.get("end", start)) + offset_s
+            except (TypeError, ValueError):
+                continue
+            words.append({"word": w.get("word", ""), "start": start, "end": end})
+        for s in data.get("segments") or []:
+            seg = dict(s)
+            seg["start"] = float(s.get("start", 0)) + offset_s
+            seg["end"] = float(s.get("end", 0)) + offset_s
+            segments.append(seg)
+
+    words.sort(key=lambda w: w["start"])
+    deduped: list[dict] = []
+    for w in words:
+        clean = str(w["word"]).strip().lower().strip(".,!?;:\"'")
+        if not clean:
+            continue
+        if deduped:
+            prev_clean = str(deduped[-1]["word"]).strip().lower().strip(".,!?;:\"'")
+            # Same word within the overlap window = duplicate from the next chunk
+            if prev_clean == clean and abs(w["start"] - deduped[-1]["start"]) < 1.2:
+                continue
+        deduped.append(w)
+
+    text = _normalize(" ".join(str(w["word"]).strip() for w in deduped))
+    return text, deduped, segments
+
+
 async def transcribe_audio(
     wav_bytes: bytes,
     reference: str = "",
@@ -621,43 +761,56 @@ async def transcribe_audio(
             "Restart the API after editing backend/.env"
         )
 
-    # Build request data - prompt helps Whisper stay on track with expected text
-    request_data = {
-        "model": "whisper-large-v3",
-        "language": "en",
-        "response_format": "verbose_json",
-        "timestamp_granularities[]": "word",
-        "temperature": "0",
-    }
-    # No full-passage prompt — it makes Whisper stop early and ignore real speech
+    # Short passage anchor helps the FIRST window stay on track (scripted only).
+    # A full-passage prompt makes Whisper stop early, so keep it tiny.
+    anchor = None
     if reference and not guided:
-        anchor = " ".join(_tokenize(reference)[:8])
-        if anchor:
-            request_data["prompt"] = anchor
+        anchor = " ".join(_tokenize(reference)[:8]) or None
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": ("audio.wav", wav_bytes, "audio/wav")},
-            data=request_data,
+    # Measure duration to decide single-shot vs chunked transcription.
+    audio = None
+    duration_ms = 0
+    try:
+        from pydub import AudioSegment
+
+        audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+        duration_ms = len(audio)
+    except Exception:
+        audio = None
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        if audio is None or duration_ms <= _STT_SINGLE_LIMIT_MS:
+            data = await _stt_request(client, api_key, wav_bytes, prompt=anchor)
+            raw_text = _best_transcript_text(data)
+            text = _fix_stt_text(raw_text)
+            tokens = _build_word_tokens(text, data.get("words") or [], data.get("segments") or [])
+            return TranscriptionResult(text=text, words=tokens, raw_text=raw_text)
+
+        # Long recording (read-passage ~50s, Jam 60-75s): split into overlapping
+        # windows so one bad window can't wipe out the rest of the transcript.
+        slices: list[tuple[float, bytes]] = []
+        start = 0
+        while start < duration_ms:
+            end = min(start + _STT_CHUNK_MS, duration_ms)
+            buf = io.BytesIO()
+            audio[start:end].export(buf, format="wav")
+            slices.append((start / 1000.0, buf.getvalue()))
+            if end >= duration_ms:
+                break
+            start += _STT_CHUNK_STEP_MS
+
+        async def _run(idx: int, offset_s: float, chunk: bytes) -> tuple[float, dict]:
+            prompt = anchor if idx == 0 else None
+            return offset_s, await _stt_request(client, api_key, chunk, prompt=prompt)
+
+        results = await asyncio.gather(
+            *[_run(i, off, b) for i, (off, b) in enumerate(slices)]
         )
-        if resp.status_code == 401:
-            detail = resp.text[:200]
-            raise RuntimeError(
-                f"Groq rejected the API key (401). Restart uvicorn after changing .env. {detail}"
-            )
-        resp.raise_for_status()
-        data = resp.json()
 
-    raw_text = _best_transcript_text(data)
-    # Only fix known STT typos — never delete user speech from the transcript
-    text = _fix_stt_text(raw_text)
-
-    segments = data.get("segments") or []
-    raw_words = data.get("words") or []
-    tokens = _build_word_tokens(text, raw_words, segments)
-
+    merged_text, merged_words, merged_segments = _merge_chunk_results(list(results))
+    raw_text = merged_text
+    text = _fix_stt_text(merged_text)
+    tokens = _build_word_tokens(text, merged_words, merged_segments)
     return TranscriptionResult(text=text, words=tokens, raw_text=raw_text)
 
 
@@ -807,15 +960,35 @@ def score_scripted(
             word_score = best_sim
             if best_conf < LOW_CONFIDENCE:
                 word_score = min(word_score, best_conf)
+            # A trap confusion (whether→weather) can look like a near-perfect
+            # text match — don't reward it. Cap the word's contribution.
+            is_trap = _is_trap_confusion(exp, best_hw)
+            if is_trap:
+                word_score = min(word_score, 45.0)
             scores.append(word_score)
 
-            if best_sim < _GOOD_MATCH and _should_flag_mistake(exp, best_hw, best_sim):
+            # Correct spelling but a trap word came out with shaky confidence:
+            # the sound was borderline even though STT guessed it right.
+            trap_cfg = PRONUNCIATION_TRAPS.get(exp.lower())
+            if (
+                not is_trap
+                and trap_cfg
+                and best_hw.lower() == exp.lower()
+                and best_conf < trap_cfg["confidence_floor"]
+            ):
+                mistake = _make_mistake(exp, best_hw, best_sim, best_conf, min(word_score, best_conf))
+                if mistake:
+                    mistakes.append(mistake)
+                continue
+
+            if (best_sim < _GOOD_MATCH or is_trap) and _should_flag_mistake(exp, best_hw, best_sim):
                 nearby_better = False
-                for k in range(1, 3):
-                    if exp_idx + k < len(expected_scored):
-                        if _word_similarity(expected_scored[exp_idx + k], best_hw) > best_sim + 8:
-                            nearby_better = True
-                            break
+                if not is_trap:
+                    for k in range(1, 3):
+                        if exp_idx + k < len(expected_scored):
+                            if _word_similarity(expected_scored[exp_idx + k], best_hw) > best_sim + 8:
+                                nearby_better = True
+                                break
                 if not nearby_better:
                     mistake = _make_mistake(exp, best_hw, best_sim, best_conf, word_score)
                     if mistake:
@@ -908,6 +1081,16 @@ def score_scripted(
                 continue
             trimmed.append(m)
         mistakes = trimmed
+
+    # Pronunciation should visibly count: each mispronounced trap word (silent
+    # letter / homophone) trims the score beyond its single-word average, so a
+    # fully-read passage with clear sound errors cannot sit near the top.
+    trap_errors = sum(
+        1 for m in mistakes if m.get("mistakeType") in {"wrong_sound"}
+        and m.get("word", "").lower() in PRONUNCIATION_TRAPS
+    )
+    if trap_errors:
+        overall = max(0.0, overall - min(24.0, trap_errors * 6.0))
 
     return round(overall, 1), mistakes
 
@@ -1163,6 +1346,19 @@ def format_mistakes(mistakes: list[dict]) -> list[dict]:
     ]
 
 
+def _dedupe_by_word(mistakes: list[dict]) -> list[dict]:
+    """One practice entry per word — Jam can flag the same word as repeat + stutter."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for m in mistakes:
+        key = m.get("word", "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(m)
+    return unique
+
+
 def pick_practice_words(
     mistakes: list[dict],
     limit: int | None = None,
@@ -1189,7 +1385,7 @@ def pick_practice_words(
             return (priority.get(m.get("mistakeType", ""), 9), m.get("score", 0))
         if jam:
             filtered.sort(key=jam_sort)
-        return format_mistakes(filtered[:cap])
+        return format_mistakes(_dedupe_by_word(filtered)[:cap])
 
     filtered = [
         m
@@ -1209,7 +1405,7 @@ def pick_practice_words(
         return (not is_critical, not is_substitution, m.get("score", 0))
 
     filtered.sort(key=sort_key)
-    return format_mistakes(filtered[:cap])
+    return format_mistakes(_dedupe_by_word(filtered)[:cap])
 
 
 def build_metrics(overall: float, stats: dict) -> dict:
@@ -1231,12 +1427,17 @@ def verify_word(expected_word: str, transcript: str) -> tuple[bool, float, str]:
         return False, 0.0, "(nothing detected)"
 
     expected = expected_word.lower().strip()
-    aliases = _STT_VERIFY_ALIASES.get(expected, set())
+    trap = PRONUNCIATION_TRAPS.get(expected)
+    # Trap words must be pronounced correctly — never soft-pass a look-alike.
+    aliases: set[str] = set() if trap else _STT_VERIFY_ALIASES.get(expected, set())
 
     best_word = heard[0]
     best_score = 0.0
     for w in heard:
         wl = w.lower()
+        if trap and wl in trap["confusions"]:
+            # Said the wrong-sounding homophone — clear fail with the tip.
+            return False, 0.0, w
         if wl == expected or wl in aliases:
             # Exact or known Whisper mix-up — treat as a clear pass
             return True, 100.0, w
@@ -1244,6 +1445,11 @@ def verify_word(expected_word: str, transcript: str) -> tuple[bool, float, str]:
         if score > best_score:
             best_score = score
             best_word = w
+
+    # Trap words need exact spelling from STT — phonetic near-misses are the
+    # very errors we are trying to catch, so don't soft-pass them.
+    if trap:
+        return False, round(best_score, 1), best_word
 
     # Pass on strong phonetic match even if Whisper spelled it differently
     # (single-word practice is noisy; don't require exact spelling)

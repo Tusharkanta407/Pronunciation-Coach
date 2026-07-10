@@ -14,7 +14,15 @@ export type Page =
   | 'practice'
   | 'summary'
 
-export type MistakeType = 'wrong_word' | 'skipped' | 'mumbled' | 'unclear' | 'pause' | 'repeat' | 'stutter'
+export type MistakeType =
+  | 'wrong_word'
+  | 'wrong_sound'
+  | 'skipped'
+  | 'mumbled'
+  | 'unclear'
+  | 'pause'
+  | 'repeat'
+  | 'stutter'
 
 export interface WordIssue {
   word: string

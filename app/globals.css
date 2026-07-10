@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@font-face {
+  font-family: 'Inter';
+  src: url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --color-primary: #15c39a;
+  --color-primary-foreground: #ffffff;
+  --color-background: #ffffff;
+  --color-foreground: #1f2937;
+  --color-card: #f9fafb;
+  --color-card-foreground: #1f2937;
+  --color-muted: #f3f4f6;
+  --color-muted-foreground: #6b7280;
+  --color-border: #e5e7eb;
+  --color-accent: #15c39a;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #ef4444;
+  --color-input: #f3f4f6;
+  --color-ring: #15c39a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1f2937;
+  --color-secondary: #6b7280;
+  --color-secondary-foreground: #ffffff;
+  --color-sidebar: #ffffff;
+  --color-sidebar-foreground: #1f2937;
+  --color-sidebar-primary: #15c39a;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #15c39a;
+  --color-sidebar-accent-foreground: #ffffff;
+  --color-sidebar-border: #e5e7eb;
+  --color-sidebar-ring: #15c39a;
+  --color-chart-1: #15c39a;
+  --color-chart-2: #10b981;
+  --color-chart-3: #059669;
+  --color-chart-4: #047857;
+  --color-chart-5: #065f46;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  --radius-4xl: 2.5rem;
+}
+
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #1f2937;
+  --card: #f9fafb;
+  --card-foreground: #1f2937;
+  --popover: #ffffff;
+  --popover-foreground: #1f2937;
+  --primary: #15c39a;
+  --primary-foreground: #ffffff;
+  --secondary: #6b7280;
+  --secondary-foreground: #ffffff;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --accent: #15c39a;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --border: #e5e7eb;
+  --input: #f3f4f6;
+  --ring: #15c39a;
+  --chart-1: #15c39a;
+  --chart-2: #10b981;
+  --chart-3: #059669;
+  --chart-4: #047857;
+  --chart-5: #065f46;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1f2937;
+  --sidebar-primary: #15c39a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #15c39a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: #15c39a;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}

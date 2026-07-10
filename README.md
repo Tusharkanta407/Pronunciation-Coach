@@ -5,6 +5,9 @@ AI-assisted English pronunciation practice — record or upload speech, get a sc
 **Live app:** [https://pronunciation-coach.vercel.app](https://pronunciation-coach.vercel.app)  
 **API health:** [https://pronunciation-coach-api.onrender.com/health](https://pronunciation-coach-api.onrender.com/health)
 
+Architecture notes (1–2 pages): [`docs/Architecture.docx`](docs/Architecture.docx)  
+Regenerate: `python docs/generate_architecture_doc.py` (needs `pip install python-docx`)
+
 ---
 
 ## What it does
@@ -41,7 +44,7 @@ Frontend proxies `/api/*` to the backend via Next.js rewrites (`API_PROXY_TARGET
 - **Free / Jam:** no forced passage — flag mumbled / low-confidence words; Jam also flags repeats and stuttery loops.  
 - **Long audio:** Whisper is chunked (~24s windows) so a 50–75s recording doesn’t truncate or hallucinate the ending.
 
-This is a practical coach, not a lab phoneme lab. Architecture notes: `docs/System_Architecture.docx` (regenerate with `python docs/generate_architecture_doc.py`).
+This is a practical coach, not a lab phoneme lab. See `docs/Architecture.docx` for the full write-up.
 
 ---
 

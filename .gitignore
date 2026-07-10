@@ -34,3 +34,7 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Word lock / temp files (never commit)
+~$*
+docs/~$*

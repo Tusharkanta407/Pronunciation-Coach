@@ -323,8 +323,8 @@ def add_next_week_diagram(doc):
 
 def build() -> Path:
     out_dir = Path(__file__).resolve().parent
-    out_path = out_dir / "System_Architecture.docx"
-    alt_path = out_dir / "System_Architecture_v2.docx"
+    out_path = out_dir / "Architecture.docx"
+    alt_path = out_dir / "Architecture_v2.docx"
 
     doc = Document()
 

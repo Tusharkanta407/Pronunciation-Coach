@@ -1,21 +1,22 @@
 """
-Strip 'Co-authored-by: Cursor' from recent commit messages.
+Strip 'Co-authored-by: Cursor' from recent commit messages (Windows-safe).
 
-GitHub shows Cursor as a collaborator because of that trailer — not because
-of any Cursor files in the repo.
+GitHub shows Cursor as collaborator because of that trailer — not Cursor files.
 
-Run from repo root (you push yourself afterward):
-
+Usage (from repo root):
+    set FILTER_BRANCH_SQUELCH_WARNING=1
     python docs/strip_cursor_coauthor.py
+    git log -5
     git push --force-with-lease origin main
-
-Only rewrites commits that contain the Cursor co-author line.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 
 MARKER = "Co-authored-by: Cursor"
@@ -23,7 +24,7 @@ MARKER = "Co-authored-by: Cursor"
 
 def main() -> int:
     log = subprocess.check_output(
-        ["git", "log", "--format=%H", "-20"],
+        ["git", "log", "--format=%H", "-30"],
         text=True,
     ).strip().splitlines()
 
@@ -43,43 +44,47 @@ def main() -> int:
     oldest = to_fix[-1]
     print(f"Found {len(to_fix)} commit(s) with Cursor co-author.")
     print(f"Rewriting from {oldest[:8]}..HEAD")
-    print()
 
-    # filter-branch msg-filter: drop Cursor co-author lines
-    filter_cmd = (
-        r"python -c \"import sys; "
-        r"print(''.join([l for l in sys.stdin "
-        r"if 'Co-authored-by: Cursor' not in l]).rstrip() + chr(10))\""
+    # Write a tiny msg-filter script to a temp file (avoids quoting hell on Windows)
+    filter_py = Path(tempfile.gettempdir()) / "git_msg_filter_strip_cursor.py"
+    filter_py.write_text(
+        "import sys\n"
+        "data = sys.stdin.read()\n"
+        "lines = [l for l in data.splitlines() if 'Co-authored-by: Cursor' not in l]\n"
+        "sys.stdout.write('\\n'.join(lines).rstrip() + '\\n')\n",
+        encoding="utf-8",
     )
 
-    # Use git filter-branch from parent of oldest commit
     parent = subprocess.check_output(
         ["git", "rev-parse", f"{oldest}^"],
         text=True,
     ).strip()
+
+    env = os.environ.copy()
+    env["FILTER_BRANCH_SQUELCH_WARNING"] = "1"
 
     cmd = [
         "git",
         "filter-branch",
         "-f",
         "--msg-filter",
-        (
-            "python -c \"import sys; data=sys.stdin.read(); "
-            "lines=[l for l in data.splitlines() if 'Co-authored-by: Cursor' not in l]; "
-            "print(chr(10).join(lines).rstrip()+chr(10))\""
-        ),
+        f'python "{filter_py}"',
         f"{parent}..HEAD",
     ]
 
-    print("Running:", " ".join(cmd[:5]), "...")
-    result = subprocess.run(cmd)
+    print("Running filter-branch (no prompt)...")
+    result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("filter-branch failed.", file=sys.stderr)
         return result.returncode
 
+    # Show result
     print()
-    print("Done. Verify with:  git log -5")
-    print("Then push:          git push --force-with-lease origin main")
+    print("Recent messages:")
+    subprocess.run(["git", "log", "-5", "--format=%h %s%n%b%n---"])
+    print()
+    print("If Cursor lines are gone, push with:")
+    print("  git push --force-with-lease origin main")
     return 0
 
 

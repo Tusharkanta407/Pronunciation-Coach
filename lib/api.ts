@@ -37,6 +37,53 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Ping /health until the Render (or local) backend is awake.
+ * Free-tier hosts sleep after idle — first hit can take 30–90s.
+ */
+export async function wakeBackend(
+  onAttempt?: (attempt: number, elapsedMs: number) => void,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 120_000
+  const intervalMs = options?.intervalMs ?? 2_500
+  const started = Date.now()
+  let attempt = 0
+
+  while (Date.now() - started < timeoutMs) {
+    attempt += 1
+    onAttempt?.(attempt, Date.now() - started)
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 15_000)
+      const res = await fetch(`${API_URL}/health`, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { status?: string } | null
+        if (!data || data.status === 'ok' || res.status === 200) {
+          return
+        }
+      }
+    } catch {
+      /* still sleeping / network blip — keep polling */
+    }
+    await sleep(intervalMs)
+  }
+
+  throw new ApiError(
+    'The server is taking too long to wake up. Please wait a minute and try again.',
+    'network'
+  )
+}
+
 export async function sessionExists(sessionId: string): Promise<boolean> {
   const res = await apiFetch(`${API_URL}/api/session/${sessionId}`)
   return res.ok

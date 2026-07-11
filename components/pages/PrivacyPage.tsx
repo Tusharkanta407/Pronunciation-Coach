@@ -10,11 +10,12 @@ import { AlertTriangle, ChevronDown, Shield } from 'lucide-react'
 interface PrivacyPageProps {
   onContinue: () => void | Promise<void>
   onBack: () => void
+  isStarting?: boolean
 }
 
 const SCROLL_THRESHOLD = 24
 
-export function PrivacyPage({ onContinue, onBack }: PrivacyPageProps) {
+export function PrivacyPage({ onContinue, onBack, isStarting = false }: PrivacyPageProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [hasScrolledToEnd, setHasScrolledToEnd] = useState(false)
   const [agreed, setAgreed] = useState(false)
@@ -160,15 +161,15 @@ export function PrivacyPage({ onContinue, onBack }: PrivacyPageProps) {
           </div>
 
           <div className="flex gap-3">
-            <Button onClick={onBack} variant="outline" className="flex-1 h-11">
+            <Button onClick={onBack} variant="outline" className="flex-1 h-11" disabled={isStarting}>
               Back
             </Button>
             <Button
               onClick={onContinue}
-              disabled={!agreed || !hasScrolledToEnd}
+              disabled={!agreed || !hasScrolledToEnd || isStarting}
               className="flex-1 h-11 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50"
             >
-              Continue
+              {isStarting ? 'Starting…' : 'Continue'}
             </Button>
           </div>
         </div>
